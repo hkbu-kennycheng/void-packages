@@ -1,0 +1,30 @@
+# Template file for 'rocm-core'
+pkgname=rocm-core
+_ver_major=5
+_ver_minor=1
+_ver_patch=3
+_ver_str="${_ver_major}$(printf '%02d' $_ver_minor $_ver_patch)"
+_ver_magic=66
+version="$_ver_major.$_ver_minor.$_ver_patch"
+revision=1
+build_style=cmake
+#hostdepends="cmake"
+short_desc="AMD ROCm core package"
+maintainer=""
+license="MIT"
+homepage="https://rocmdocs.amd.com/en/latest/"
+distfiles="https://repo.radeon.com/rocm/apt/${version}/pool/main/${pkgname:0:1}/${pkgname}/${pkgname}_${version}.${_ver_str}-${_ver_magic}_amd64.deb"
+checksum="99a4631736fc9d0a88db6e76886b68e066a33a4e673ab350c0fba07010ba52c8"
+nostrip=yes
+configure_args="-DROCM_VERSION=$_ver_str -DROCM_HEADER_DIR=opt/rocm-${version}/include -DCMAKE_INSTALL_PREFIX=/opt/rocm"
+
+do_extract() {
+	ar p ${XBPS_SRCDISTDIR}/${pkgname}-${version}/rocm-core_${version}.${_ver_str}-${_ver_magic}_amd64.deb \
+		data.tar.gz | bsdtar -x -f -
+	cp ${FILESDIR}/CMakeLists.txt .
+	cp ${FILESDIR}/rocm_version.c .
+}
+
+post_build() {
+	sed -i "s|/opt/rocm-${version}|/opt/rocm|g" opt/rocm-${version}/lib/rocmmod
+}
