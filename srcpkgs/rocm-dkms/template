@@ -1,0 +1,64 @@
+# Template file for 'rocm-dkms'
+pkgname=rocm-dkms
+version=5.1.3
+revision=1
+depends="dkms"
+hostmakedepends="tar autoconf automake"
+wrksrc="ROCK-Kernel-Driver-rocm-${version}"
+short_desc="AMDGPU Driver with KFD used by the ROCm project"
+maintainer=""
+license="GPL-2.0-only"
+homepage="https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/"
+distfiles="https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/archive/refs/tags/rocm-${version}.tar.gz"
+checksum=35f0e69c01b114c06f6753d1d4632663fcf60ede9fd303226cbe9e84a20147b4
+dkms_modules="amdgpu 1.0"
+
+case "$XBPS_TARGET_MACHINE" in
+	x86_64*) _karch="x86_64";;
+	i686*) _karch="i386";;
+	aarch64*) _karch="arm64";;
+	arm*) _karch="arm";;
+	ppc*) _karch="powerpc";;
+	mips*) _karch="mips";;
+	*) broken="kernel arch not defined";;
+esac
+
+post_extract() {
+	mkdir -p $pkgname
+
+	cp -r drivers/gpu/drm/amd drivers/gpu/drm/scheduler \
+	      drivers/gpu/drm/ttm drivers/gpu/drm/drm_gem_ttm_helper.c $pkgname/
+
+	mkdir -p $pkgname/include/drm $pkgname/include/linux \
+	         $pkgname/include/uapi/drm $pkgname/include/uapi/linux \
+	         $pkgname/amd/amdkcl/dma-buf
+
+	cp -r include/drm/amd_asic_type.h include/drm/amd_rdma.h \
+	      include/drm/gpu_scheduler.h include/drm/spsc_queue.h \
+	      include/drm/ttm $pkgname/include/drm/
+
+	cp -r include/kcl $pkgname/include/
+	cp include/linux/dma-resv.h include/kcl/reservation.h $pkgname/include/linux/
+	cp include/uapi/drm/amdgpu_drm.h $pkgname/include/uapi/drm/
+	cp include/uapi/linux/kfd_ioctl.h $pkgname/include/uapi/linux/
+	cp drivers/dma-buf/dma-resv.c $pkgname/amd/amdkcl/dma-buf/
+
+	cd $pkgname
+	ln -sf amd/dkms/Makefile .
+	ln -sf amd/dkms/dkms.conf .
+}
+
+do_configure() {
+	cd ${pkgname}/amd/dkms && ./autogen.sh
+}
+
+do_install() {
+	local dest=usr/src/rocm-dkms-${version}
+
+	vmkdir /${dest}
+	vcopy "${pkgname}/*" ${dest}
+
+	vmkdir /usr/lib/modprobe.d
+	echo "blacklist radeon" > ${DESTDIR}/usr/lib/modprobe.d/${pkgname}.conf
+	chmod 644 ${DESTDIR}/usr/lib/modprobe.d/${pkgname}.conf
+}
