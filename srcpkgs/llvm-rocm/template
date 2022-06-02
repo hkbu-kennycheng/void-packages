@@ -1,0 +1,186 @@
+# Template file for 'llvm12'
+pkgname=llvm-rocm
+version=5.1.3
+revision=1
+wrksrc="llvm-project-rocm-${version}"
+build_wrksrc=llvm
+build_style=cmake
+configure_args="
+ -DCMAKE_BUILD_TYPE=Release -Wno-dev
+ -DLLVM_ENABLE_ASSERTIONS=1
+ -DLLVM_BINUTILS_INCDIR=/usr/include"
+hostmakedepends="perl python3 zlib-devel swig python3-Sphinx
+ python3-recommonmark python3-sphinx-automodapi"
+makedepends="python3-devel zlib-devel elfutils-devel libedit-devel
+ libxml2-devel binutils-devel libatomic-devel"
+short_desc="Low Level Virtual Machine with ROCm patches"
+maintainer=""
+license="Apache-2.0"
+homepage="https://www.llvm.org"
+distfiles="https://github.com/RadeonOpenCompute/llvm-project/archive/refs/tags/rocm-${version}.tar.gz"
+checksum=d236a2064363c0278f7ba1bb2ff1545ee4c52278c50640e8bb2b9cfef8a2f128
+lib32disabled=yes
+python_version=3
+
+if [ "$XBPS_TARGET_LIBC" = "musl" ]; then
+	makedepends+=" libexecinfo-devel"
+	depends+=" libexecinfo-devel"
+fi
+
+# "operand out of range" assembler failures
+case "$XBPS_TARGET_MACHINE" in
+	ppc64*) ;;
+	ppc*) configure_args+=" -DCLANG_ENABLE_CLANGD=OFF" ;;
+esac
+
+_enabled_projects="clang;compiler-rt;lld"
+
+subpackages+=" clang-rocm libclang-rocm libclang-cpp-rocm"
+subpackages+=" lld-rocm lld-rocm-devel"
+
+configure_args+=" -DLLVM_ENABLE_PROJECTS=${_enabled_projects}"
+
+post_patch() {
+	# update config.guess for better platform detection
+	cp $XBPS_COMMONDIR/environment/configure/automake/config.guess \
+		${wrksrc}/llvm/cmake
+
+	case "$XBPS_TARGET_MACHINE" in
+		x86_64-musl) # some sanitizer currently only on x86_64 stuff needs backtrace
+			vsed -i 's,# Set common link flags.,list(APPEND SANITIZER_COMMON_LINK_LIBS execinfo),' \
+				${wrksrc}/compiler-rt/CMakeLists.txt
+			vsed -i 's/set(COMPILER_RT_HAS_SCUDO_STANDALONE TRUE)/set(COMPILER_RT_HAS_SCUDO_STANDALONE FALSE)/' \
+				${wrksrc}/compiler-rt/cmake/config-ix.cmake
+			;;
+		arm*-musl|i686-musl) # sanitizer code is broken since it duplicates some libc bits
+			vsed -i 's/set(COMPILER_RT_HAS_SANITIZER_COMMON TRUE)/set(COMPILER_RT_HAS_SANITIZER_COMMON FALSE)/' \
+				${wrksrc}/compiler-rt/cmake/config-ix.cmake
+			;;
+	esac
+}
+
+pre_configure() {
+	local triplet
+
+	# Vastly reduce size of debugging symbols:
+	CFLAGS=${CFLAGS/ -g/ -g1}
+	CXXFLAGS=${CXXFLAGS/ -g/ -g1}
+
+	# since gcc9, the build likes to blow up for ppc32 apparently because
+	# of clang being too large for a 24-bit relative call to the PLT, so
+	# optimize for size instead
+	case "$XBPS_TARGET_MACHINE" in
+		ppc64*) ;;
+		mips*-musl|ppc*) configure_args+=" -DVOID_CXX_OPT_FLAGS=-Os" ;;
+	esac
+
+	if [ "$CROSS_BUILD" ]; then
+		msg_normal "Building host tblgen\n"
+		mkdir -p build/HOST
+		cd build/HOST
+		CC="$BUILD_CC" CXX="$BUILD_CXX" CFLAGS="$BUILD_CFLAGS" \
+			CXXFLAGS="$BUILD_CXXFLAGS" LDFLAGS="$BUILD_LDFLAGS" \
+			cmake ../.. -DCMAKE_BUILD_TYPE=Release \
+			-DLLVM_ENABLE_PROJECTS=${_enabled_projects}
+		make ${makejobs} -C utils/TableGen
+		make ${makejobs} -C tools/clang/utils/TableGen
+		configure_args+=" -DLLVM_TABLEGEN=${wrksrc}/llvm/build/HOST/bin/llvm-tblgen"
+		configure_args+=" -DCLANG_TABLEGEN=${wrksrc}/llvm/build/HOST/bin/clang-tblgen"
+		cd ../..
+	fi
+
+	case "$XBPS_TARGET_MACHINE" in
+		i686*) _arch="X86";;
+		x86_64*) _arch="X86";;
+		armv5*) _arch="Armv5te";;
+		armv6*) _arch="Armv6";;
+		armv7*) _arch="Armv7";;
+		aarch64*) _arch="AArch64";;
+		mips*) _arch="Mips";;
+		ppc*) _arch="PowerPC";;
+		riscv64*) _arch="RISCV64";;
+	esac
+
+	triplet=${XBPS_CROSS_TRIPLET:-$XBPS_TRIPLET}
+
+	configure_args+=" -DLLVM_TARGET_ARCH=${_arch}"
+	configure_args+=" -DLLVM_TARGETS_TO_BUILD=AMDGPU;${_arch}"
+	configure_args+=" -DLLVM_HOST_TRIPLE=${triplet}"
+	configure_args+=" -DLLVM_DEFAULT_TARGET_TRIPLE=${triplet}"
+}
+
+do_install() {
+	cd build
+	cmake -DCMAKE_INSTALL_PREFIX=${DESTDIR}/opt/rocm -P cmake_install.cmake
+
+	# Required for multilib.
+	if [ "$XBPS_TARGET_MACHINE" = "x86_64" ]; then
+		for _header in llvm-config; do
+			mv ${DESTDIR}/opt/rocm/include/llvm/Config/${_header}{,-64}.h
+			vinstall ${FILESDIR}/llvm-Config-${_header}.h 644 \
+				opt/rocm/include/llvm/Config ${_header}.h
+		done
+	fi
+
+	# Remove llvm-config-host in cross builds.
+	if [ "$CROSS_BUILD" ]; then
+		rm -f ${DESTDIR}/opt/rocm/bin/llvm-config-host
+	fi
+}
+
+clang-rocm_package() {
+	lib32disabled=yes
+	depends="libstdc++-devel libgcc-devel  binutils ${XBPS_TARGET_LIBC}-devel
+	 libclang-rocm-${version}_${revision}"
+	short_desc+=" - C language family frontend"
+	homepage="https://clang.llvm.org/"
+	pkg_install() {
+		vmove opt/rocm/include/clang
+		vmove opt/rocm/include/clang-c
+		vmove "opt/rocm/bin/*clang*"
+		vmove opt/rocm/bin/c-index-test
+		vmove opt/rocm/lib/clang
+		vmove opt/rocm/lib/cmake/clang
+		vmove "opt/rocm/lib/libclang*.a"
+		vmove "opt/rocm/lib/libclang*.so"
+		vmove opt/rocm/share/clang
+	}
+}
+
+libclang-rocm_package() {
+	short_desc+=" - C frontend runtime library"
+	pkg_install() {
+		vmove "opt/rocm/lib/libclang.so.*"
+	}
+}
+
+libclang-cpp-rocm_package() {
+	short_desc+=" - C frontend runtime library (C++ interface)"
+	pkg_install() {
+		vmove "opt/rocm/lib/libclang-cpp.so.*"
+	}
+}
+
+lld-rocm_package() {
+	lib32disabled=yes
+	short_desc+=" - linker"
+	homepage="https://lld.llvm.org"
+	pkg_install() {
+		vmove opt/rocm/bin/lld*
+		vmove opt/rocm/bin/wasm-ld
+		vmove opt/rocm/bin/ld.lld*
+		vmove opt/rocm/bin/ld64.lld*
+	}
+}
+
+lld-rocm-devel_package() {
+	lib32disabled=yes
+	short_desc+=" - linker - development files"
+	homepage="https://lld.llvm.org"
+	depends="lld-rocm>=${version}_${revision}"
+	pkg_install() {
+		vmove opt/rocm/include/lld
+		vmove opt/rocm/lib/cmake/lld
+		vmove "opt/rocm/lib/liblld*a"
+	}
+}
