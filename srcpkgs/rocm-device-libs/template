@@ -1,0 +1,14 @@
+# Template file for 'rocm-device-libs'
+pkgname=rocm-device-libs
+version=5.1.3
+revision=1
+wrksrc="ROCm-Device-Libs-rocm-${version}"
+build_style=cmake
+hostmakedepends="llvm-rocm clang-rocm libclang-cpp-rocm rocm-cmake ncurses-devel zlib-devel"
+short_desc="ROCm Device Libraries"
+maintainer=""
+license="MIT"
+homepage="https://github.com/RadeonOpenCompute/ROCm-Device-Libs"
+distfiles="https://github.com/RadeonOpenCompute/ROCm-Device-Libs/archive/refs/tags/rocm-${version}.tar.gz"
+checksum=c41958560ec29c8bf91332b9f668793463904a2081c330c0d828bf2f91d4f04e
+configure_args="-DCMAKE_INSTALL_PREFIX=/opt/rocm"
